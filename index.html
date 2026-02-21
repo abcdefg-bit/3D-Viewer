@@ -1,0 +1,246 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>STEP Viewer Pro - iPad Ready</title>
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+                "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/",
+                "occt-import-js": "https://unpkg.com/occt-import-js@0.0.12/dist/occt-import-js.js"
+            }
+        }
+    </script>
+    <style>
+        body { margin: 0; overflow: hidden; background: #1a1a1a; color: white; font-family: sans-serif; }
+        canvas { display: block; }
+        #ui { position: absolute; top: 10px; left: 10px; z-index: 100; background: rgba(0,0,0,0.85); padding: 15px; border-radius: 10px; width: 260px; font-size: 14px; }
+        #log { position: absolute; bottom: 10px; left: 10px; z-index: 100; background: rgba(0,0,0,0.7); padding: 10px; font-size: 10px; color: #0f0; max-height: 100px; overflow-y: auto; width: 300px; pointer-events: none; }
+        button { cursor: pointer; background: #444; color: white; border: 1px solid #666; padding: 10px; border-radius: 5px; width: 100%; margin-top: 10px; }
+        button.active { background: #007bff; }
+        input[type="file"] { margin-top: 10px; width: 100%; }
+        
+        .label-container { display: flex; flex-direction: column; align-items: center; pointer-events: auto; }
+        .label-content { 
+            background: white; color: black; padding: 5px 10px; border-radius: 15px; 
+            font-size: 12px; font-weight: bold; display: flex; align-items: center; gap: 5px; box-shadow: 0 2px 5px rgba(0,0,0,0.5);
+        }
+        .delete-btn { background: #ff4d4d; color: white; border: none; width: 16px; height: 16px; border-radius: 50%; font-size: 10px; }
+        .leader-line { width: 1px; height: 20px; background: white; }
+    </style>
+</head>
+<body>
+
+    <div id="ui">
+        <strong>STEP 3D Viewer</strong>
+        <input type="file" id="fileInput" accept=".step,.stp">
+        <button id="addBtn">点を打つ（注釈追加）</button>
+        <div style="margin-top:10px; font-size:11px; color:#ccc;">
+            ※iPadではサーバー環境(Live Server等)が必要です
+        </div>
+    </div>
+
+    <div id="log">システム準備中...</div>
+
+    <script type="module">
+        import * as THREE from 'three';
+        import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+        import { CSS2DRenderer, CSS2DObject } from 'three/addons/renderers/CSS2DRenderer.js';
+        import initOpenCascade from 'occt-import-js';
+
+        // ログ出力関数
+        const logEl = document.getElementById('log');
+        function addLog(msg) {
+            const div = document.createElement('div');
+            div.innerText = `> ${msg}`;
+            logEl.appendChild(div);
+            logEl.scrollTop = logEl.scrollHeight;
+            console.log(msg);
+        }
+
+        // --- 基本設定 ---
+        const scene = new THREE.Scene();
+        const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 3000);
+        const renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        document.body.appendChild(renderer.domElement);
+
+        const labelRenderer = new CSS2DRenderer();
+        labelRenderer.setSize(window.innerWidth, window.innerHeight);
+        labelRenderer.domElement.style.position = 'absolute';
+        labelRenderer.domElement.style.top = '0px';
+        labelRenderer.domElement.style.pointerEvents = 'none';
+        document.body.appendChild(labelRenderer.domElement);
+
+        const controls = new OrbitControls(camera, renderer.domElement);
+        scene.add(new THREE.AmbientLight(0xffffff, 0.7));
+        const light = new THREE.DirectionalLight(0xffffff, 0.8);
+        light.position.set(10, 10, 10);
+        scene.add(light);
+
+        camera.position.set(10, 10, 10);
+        addLog("準備完了。STEPファイルを選択してください。");
+
+        // --- 状態管理 ---
+        const annotations = [];
+        let isAddingPoint = false;
+        const modelGroup = new THREE.Group();
+        scene.add(modelGroup);
+
+        // --- STEP読み込み ---
+        document.getElementById('fileInput').addEventListener('change', async (event) => {
+            const file = event.target.files[0];
+            if (!file) return;
+
+            addLog(`ファイル受信: ${file.name}`);
+            try {
+                addLog("解析ライブラリを初期化中(Wasm)...");
+                const occt = await initOpenCascade();
+                
+                const reader = new FileReader();
+                reader.onload = async (e) => {
+                    addLog("データ変換開始...");
+                    const buffer = new Uint8Array(e.target.result);
+                    const result = occt.ReadStepFile(buffer);
+
+                    if (!result || !result.meshes || result.meshes.length === 0) {
+                        throw new Error("モデルの変換に失敗しました。形式を確認してください。");
+                    }
+
+                    // 既存モデルのクリーンアップ
+                    while(modelGroup.children.length > 0) modelGroup.remove(modelGroup.children[0]);
+                    annotations.forEach(a => { scene.remove(a.label); scene.remove(a.dot); });
+                    annotations.length = 0;
+
+                    result.meshes.forEach(mesh => {
+                        const geometry = new THREE.BufferGeometry();
+                        geometry.setAttribute('position', new THREE.Float32BufferAttribute(mesh.attributes.position.array, 3));
+                        if (mesh.attributes.normal) {
+                            geometry.setAttribute('normal', new THREE.Float32BufferAttribute(mesh.attributes.normal.array, 3));
+                        }
+                        const material = new THREE.MeshPhongMaterial({ color: 0xaaaaaa, side: THREE.DoubleSide });
+                        modelGroup.add(new THREE.Mesh(geometry, material));
+                    });
+
+                    // ズーム調整
+                    const box = new THREE.Box3().setFromObject(modelGroup);
+                    const center = box.getCenter(new THREE.Vector3());
+                    const size = box.getSize(new THREE.Vector3()).length();
+                    controls.target.copy(center);
+                    camera.position.copy(center).add(new THREE.Vector3(size, size, size));
+                    controls.update();
+
+                    addLog(`表示成功！メッシュ数: ${result.meshes.length}`);
+                };
+                reader.readAsArrayBuffer(file);
+
+            } catch (err) {
+                addLog(`エラー: ${err.message}`);
+                alert("エラーが発生しました: " + err.message);
+            }
+        });
+
+        // --- 注釈機能 ---
+        const addBtn = document.getElementById('addBtn');
+        addBtn.onclick = () => {
+            isAddingPoint = !isAddingPoint;
+            addBtn.classList.toggle('active', isAddingPoint);
+            if(isAddingPoint) addLog("モデルをクリックして注釈を配置してください");
+        };
+
+        window.addEventListener('click', (event) => {
+            if (!isAddingPoint || event.target.tagName !== 'CANVAS') return;
+
+            const mouse = new THREE.Vector2(
+                (event.clientX / window.innerWidth) * 2 - 1,
+                -(event.clientY / window.innerHeight) * 2 + 1
+            );
+
+            const raycaster = new THREE.Raycaster();
+            raycaster.setFromCamera(mouse, camera);
+            const intersects = raycaster.intersectObjects(modelGroup.children);
+
+            if (intersects.length > 0) {
+                const name = prompt("注釈名を入力:");
+                if (name) {
+                    createAnnotation(intersects[0].point, name);
+                    addLog(`注釈を追加: ${name}`);
+                }
+                isAddingPoint = false;
+                addBtn.classList.remove('active');
+            }
+        });
+
+        function createAnnotation(pos, name) {
+            const div = document.createElement('div');
+            div.className = 'label-container';
+            div.innerHTML = `
+                <div class="label-content">
+                    <span class="txt">${name}</span>
+                    <button class="delete-btn">×</button>
+                </div>
+                <div class="leader-line"></div>
+            `;
+
+            const label = new CSS2DObject(div);
+            label.position.copy(pos);
+            scene.add(label);
+
+            const dot = new THREE.Mesh(
+                new THREE.SphereGeometry(0.05),
+                new THREE.MeshBasicMaterial({ color: 0xff0000, depthTest: false })
+            );
+            dot.position.copy(pos);
+            scene.add(dot);
+
+            const item = { label, dot, div, name, originalPos: pos.clone() };
+            annotations.push(item);
+
+            div.querySelector('.delete-btn').onclick = (e) => {
+                e.stopPropagation();
+                scene.remove(label); scene.remove(dot);
+                annotations.splice(annotations.indexOf(item), 1);
+            };
+        }
+
+        // --- 更新ループ ---
+        function animate() {
+            requestAnimationFrame(animate);
+            
+            const raycaster = new THREE.Raycaster();
+            annotations.forEach((a, i) => {
+                // 遮蔽判定
+                const dir = a.dot.position.clone().sub(camera.position).normalize();
+                raycaster.set(camera.position, dir);
+                const hits = raycaster.intersectObjects(modelGroup.children);
+                const isHidden = hits.length > 0 && hits[0].distance < a.dot.position.distanceTo(camera.position) - 0.1;
+                a.div.style.opacity = isHidden ? "0.2" : "1";
+
+                // 重なり回避
+                annotations.forEach((other, j) => {
+                    if (i === j) return;
+                    if (a.label.position.distanceTo(other.label.position) < 0.7) {
+                        const force = a.label.position.clone().sub(other.label.position).normalize().multiplyScalar(0.02);
+                        a.label.position.add(force);
+                    }
+                });
+                a.label.position.lerp(a.dot.position, 0.05); // 元の位置に引き戻す
+            });
+
+            controls.update();
+            renderer.render(scene, camera);
+            labelRenderer.render(scene, camera);
+        }
+        animate();
+
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            labelRenderer.setSize(window.innerWidth, window.innerHeight);
+        });
+    </script>
+</body>
+</html>
