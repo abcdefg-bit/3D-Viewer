@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>STEP Viewer - Final Stable Version</title>
+    <title>STEP Viewer - Responsive Fix</title>
     <script type="importmap">
         {
             "imports": {
@@ -16,23 +16,18 @@
     <style>
         body { margin: 0; overflow: hidden; background: #1a1a1a; color: white; font-family: sans-serif; }
         canvas { display: block; }
-        #ui { position: absolute; top: 10px; left: 10px; z-index: 100; background: rgba(0,0,0,0.85); padding: 15px; border-radius: 10px; width: 280px; box-shadow: 0 4px 15px rgba(0,0,0,0.5); }
+        #ui { position: absolute; top: 10px; left: 10px; z-index: 100; background: rgba(0,0,0,0.85); padding: 15px; border-radius: 10px; width: 280px; }
         #progressContainer { margin-top: 15px; display: none; }
         #statusText { font-size: 11px; color: #007bff; margin-bottom: 5px; font-weight: bold; }
         #progressBarBg { width: 100%; height: 6px; background: #333; border-radius: 3px; overflow: hidden; }
         #progressBar { width: 0%; height: 100%; background: #007bff; transition: width 0.3s ease; }
         #log { position: absolute; bottom: 10px; left: 10px; z-index: 100; background: rgba(0,0,0,0.7); padding: 10px; font-size: 10px; color: #0f0; max-height: 120px; overflow-y: auto; width: 320px; border-left: 3px solid #0f0; pointer-events: none; }
-        
-        /* ボタン類 */
-        button { cursor: pointer; background: #444; color: white; border: 1px solid #666; padding: 12px; border-radius: 5px; width: 100%; margin-top: 10px; font-weight: bold; font-size: 14px; }
-        #loadBtn { background: #28a745; border-color: #1e7e34; } /* 最初から見えるように変更 */
-        #loadBtn:disabled { background: #555; border-color: #444; cursor: not-allowed; opacity: 0.6; }
+        button { cursor: pointer; background: #444; color: white; border: 1px solid #666; padding: 15px; border-radius: 5px; width: 100%; margin-top: 10px; font-weight: bold; font-size: 14px; -webkit-appearance: none; }
+        #loadBtn { background: #28a745; border-color: #1e7e34; }
+        #loadBtn:active { background: #155724; } /* 押し込んだ時の色 */
         #addBtn { background: #444; }
         button.active { background: #007bff; border-color: #0056b3; }
-        
-        input[type="file"] { margin-top: 10px; width: 100%; font-size: 12px; color: #ccc; }
-        
-        /* ラベル */
+        input[type="file"] { margin-top: 10px; width: 100%; font-size: 14px; color: #ccc; padding: 10px; background: #333; border-radius: 5px; }
         .label-container { display: flex; flex-direction: column; align-items: center; pointer-events: auto; }
         .label-content { background: white; color: black; padding: 6px 12px; border-radius: 20px; font-size: 12px; font-weight: bold; display: flex; align-items: center; gap: 8px; box-shadow: 0 4px 8px rgba(0,0,0,0.3); }
         .delete-btn { background: #ff4d4d; color: white; border: none; width: 20px; height: 20px; border-radius: 50%; cursor: pointer; }
@@ -44,18 +39,15 @@
     <div id="ui">
         <strong>STEP 3D Viewer</strong>
         <input type="file" id="fileInput" accept=".step,.stp">
-        
-        <button id="loadBtn">1. ファイルを選んでここを押す</button>
-
+        <button id="loadBtn" type="button">1. 読み込みを開始する</button>
         <div id="progressContainer">
             <div id="statusText">準備中... 0%</div>
             <div id="progressBarBg"><div id="progressBar"></div></div>
         </div>
-
         <button id="addBtn">2. 注釈を追加する</button>
     </div>
 
-    <div id="log">システム起動...</div>
+    <div id="log">システム準備完了</div>
 
     <script type="module">
         import * as THREE from 'three';
@@ -70,9 +62,7 @@
         const loadBtn = document.getElementById('loadBtn');
         const fileInput = document.getElementById('fileInput');
 
-        let selectedFile = null;
-
-        function updateStatus(msg, percent) {
+        function addLog(msg, percent) {
             const div = document.createElement('div');
             div.innerText = `[${new Date().toLocaleTimeString()}] ${msg}`;
             logEl.appendChild(div);
@@ -81,7 +71,7 @@
                 progressContainer.style.display = 'block';
                 progressBar.style.width = `${percent}%`;
                 statusText.innerText = `${msg} ... ${percent}%`;
-                if (percent >= 100) setTimeout(() => { progressContainer.style.display = 'none'; }, 1500);
+                if (percent >= 100) setTimeout(() => { progressContainer.style.display = 'none'; }, 2000);
             }
         }
 
@@ -110,33 +100,34 @@
         const modelGroup = new THREE.Group();
         scene.add(modelGroup);
 
-        // ファイル選択の監視
-        fileInput.addEventListener('change', (e) => {
-            selectedFile = e.target.files[0];
-            if(selectedFile) updateStatus(`選択済み: ${selectedFile.name}`);
-        });
-
-        // 読み込みボタンの処理
+        // iPadでのクリック反応を良くするために 'pointerdown' も考慮
         loadBtn.addEventListener('click', async () => {
-            if (!selectedFile) {
-                alert("先にファイルを選択してね！");
+            addLog("ボタンが押されました");
+            
+            const file = fileInput.files[0];
+            if (!file) {
+                addLog("エラー: ファイルが選ばれていません");
+                alert("先にファイルを選んでね！");
                 return;
             }
             
-            loadBtn.disabled = true; // 処理中は無効化
+            loadBtn.disabled = true;
             loadBtn.innerText = "読み込み中...";
             
             try {
-                updateStatus("解析エンジンを起動中...", 20);
+                addLog("解析エンジンのロードを開始...", 20);
                 const occt = await initOpenCascade();
+                addLog("エンジンロード完了", 40);
                 
-                updateStatus("STEPファイルを解析中...", 50);
                 const reader = new FileReader();
                 reader.onload = async (e) => {
+                    addLog("ファイルを解析中...", 60);
                     const buffer = new Uint8Array(e.target.result);
                     const result = occt.ReadStepFile(buffer);
                     
-                    updateStatus("3Dモデルを構築中...", 80);
+                    if (!result || !result.meshes) throw new Error("解析失敗");
+
+                    addLog("3D構築中...", 80);
                     modelGroup.clear();
                     annotations.forEach(a => { scene.remove(a.label); scene.remove(a.dot); });
                     annotations.length = 0;
@@ -155,26 +146,24 @@
                     camera.position.copy(center).add(new THREE.Vector3(size, size, size));
                     controls.update();
 
-                    updateStatus("読み込み完了！", 100);
+                    addLog("全ての処理が完了！", 100);
                     loadBtn.disabled = false;
                     loadBtn.innerText = "別のファイルを読み込む";
                 };
-                reader.readAsArrayBuffer(selectedFile);
+                reader.onerror = () => addLog("ファイル読み込みエラー");
+                reader.readAsArrayBuffer(file);
+
             } catch (err) {
-                updateStatus(`エラー発生: ${err.message}`, 0);
-                alert("読み込みエラーだよ");
+                addLog(`失敗: ${err.message}`, 0);
+                alert("エラーだよ: " + err.message);
                 loadBtn.disabled = false;
-                loadBtn.innerText = "もう一度試す";
+                loadBtn.innerText = "リトライ";
             }
         });
 
-        // 注釈追加
+        // --- 以下、注釈とループ処理（変更なし） ---
         const addBtn = document.getElementById('addBtn');
-        addBtn.onclick = () => {
-            isAddingMode = !isAddingMode;
-            addBtn.classList.toggle('active', isAddingMode);
-        };
-
+        addBtn.onclick = () => { isAddingMode = !isAddingMode; addBtn.classList.toggle('active', isAddingMode); };
         window.addEventListener('click', (event) => {
             if (!isAddingMode || event.target.tagName !== 'CANVAS') return;
             const rect = renderer.domElement.getBoundingClientRect();
@@ -185,11 +174,9 @@
             if (hits.length > 0) {
                 const name = prompt("注釈の内容:");
                 if (name) createLabel(hits[0].point, name);
-                isAddingMode = false;
-                addBtn.classList.remove('active');
+                isAddingMode = false; addBtn.classList.remove('active');
             }
         });
-
         function createLabel(pos, text) {
             const div = document.createElement('div');
             div.className = 'label-container';
@@ -204,34 +191,22 @@
             annotations.push(anno);
             div.querySelector('.delete-btn').onclick = (e) => { e.stopPropagation(); scene.remove(label); scene.remove(dot); annotations.splice(annotations.indexOf(anno), 1); };
         }
-
         function animate() {
             requestAnimationFrame(animate);
             const raycaster = new THREE.Raycaster();
             annotations.forEach((a, i) => {
                 const dir = a.dot.position.clone().sub(camera.position).normalize();
                 raycaster.set(camera.position, dir);
-                const intersects = raycaster.intersectObjects(modelGroup.children);
-                const isHidden = intersects.length > 0 && intersects[0].distance < a.dot.position.distanceTo(camera.position) - 0.1;
+                const hits = raycaster.intersectObjects(modelGroup.children);
+                const isHidden = hits.length > 0 && hits[0].distance < a.dot.position.distanceTo(camera.position) - 0.1;
                 a.div.style.opacity = isHidden ? "0.2" : "1";
-                annotations.forEach((other, j) => {
-                    if (i !== j && a.label.position.distanceTo(other.label.position) < 1.0) {
-                        a.label.position.add(a.label.position.clone().sub(other.label.position).normalize().multiplyScalar(0.02));
-                    }
-                });
+                annotations.forEach((other, j) => { if (i !== j && a.label.position.distanceTo(other.label.position) < 1.0) a.label.position.add(a.label.position.clone().sub(other.label.position).normalize().multiplyScalar(0.02)); });
                 a.label.position.lerp(a.dot.position, 0.05);
             });
-            controls.update();
-            renderer.render(scene, camera);
-            labelRenderer.render(scene, camera);
+            controls.update(); renderer.render(scene, camera); labelRenderer.render(scene, camera);
         }
         animate();
-        window.addEventListener('resize', () => {
-            camera.aspect = window.innerWidth / window.innerHeight;
-            camera.updateProjectionMatrix();
-            renderer.setSize(window.innerWidth, window.innerHeight);
-            labelRenderer.setSize(window.innerWidth, window.innerHeight);
-        });
+        window.addEventListener('resize', () => { camera.aspect = window.innerWidth / window.innerHeight; camera.updateProjectionMatrix(); renderer.setSize(window.innerWidth, window.innerHeight); labelRenderer.setSize(window.innerWidth, window.innerHeight); });
     </script>
 </body>
 </html>
